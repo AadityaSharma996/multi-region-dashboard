@@ -19,3 +19,12 @@ crash.log
 # OS
 .DS_Store
 Thumbs.db
+.review-backup-*/
+apply-reviewed-fixes.sh
+deployment-review.txt
+.final-fix-backup-*/
+finish-reviewed-fixes.sh
+.precommit-backup-*/
+final-precommit-fix.sh
+.last-fix-backup-*/
+fix-last-error-and-verify.sh

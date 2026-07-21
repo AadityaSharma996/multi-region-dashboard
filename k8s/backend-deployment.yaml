@@ -4,20 +4,56 @@ metadata:
   name: aws-dashboard-backend
 spec:
   replicas: 1
+
   selector:
     matchLabels:
       app: aws-dashboard-backend
+
   template:
     metadata:
       labels:
         app: aws-dashboard-backend
+
     spec:
       containers:
-      - name: backend
-        image: aws-dashboard-backend:latest
-        imagePullPolicy: Never
-        ports:
-        - containerPort: 4000
-        envFrom:
-        - secretRef:
-            name: aws-secret
+        - name: backend
+          image: aadityasharma96/multi-region-dashboard-backend:latest
+          imagePullPolicy: Always
+
+          ports:
+            - name: http
+              containerPort: 4000
+
+          env:
+            - name: PORT
+              value: "4000"
+
+          envFrom:
+            - secretRef:
+                name: aws-secret
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

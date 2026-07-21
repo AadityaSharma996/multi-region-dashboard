@@ -1,5 +1,3 @@
-require("dotenv").config();
-
 const { EC2Client, DescribeInstancesCommand, DescribeAvailabilityZonesCommand, DescribeRegionsCommand } = require("@aws-sdk/client-ec2");
 const { RDSClient, DescribeDBInstancesCommand } = require("@aws-sdk/client-rds");
 const { LambdaClient, ListFunctionsCommand } = require("@aws-sdk/client-lambda");
@@ -11,10 +9,6 @@ const { S3Client, ListBucketsCommand, GetBucketLocationCommand } = require("@aws
 const getClient = (ClientClass, region) =>
   new ClientClass({
     region,
-    credentials: {
-      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-    },
   });
 
 // ─── 1. All enabled regions ───────────────────────────────────────────────────

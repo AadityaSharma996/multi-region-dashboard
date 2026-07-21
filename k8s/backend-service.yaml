@@ -3,9 +3,13 @@ kind: Service
 metadata:
   name: aws-dashboard-backend-service
 spec:
+  type: ClusterIP
+
   selector:
     app: aws-dashboard-backend
+
   ports:
-    - port: 4000
+    - name: http
+      protocol: TCP
+      port: 4000
       targetPort: 4000
-  type: ClusterIP
