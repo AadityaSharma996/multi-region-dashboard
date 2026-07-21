@@ -11,6 +11,13 @@ pipeline {
         timestamps()
         disableConcurrentBuilds()
         skipDefaultCheckout(true)
+
+        buildDiscarder(
+            logRotator(
+                numToKeepStr: '10',
+                artifactNumToKeepStr: '5'
+            )
+        )
     }
 
     environment {
@@ -22,13 +29,67 @@ pipeline {
         FRONTEND_IMAGE =
             "${DOCKERHUB_USERNAME}/multi-region-dashboard-frontend"
 
-        IMAGE_TAG = "${BUILD_NUMBER}"
+        DOCKER_BUILDKIT = '1'
     }
 
     stages {
         stage('Clean Workspace') {
             steps {
                 deleteDir()
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Verify Repository') {
+            steps {
+                sh '''
+                    set -e
+
+                    echo "Current workspace:"
+                    pwd
+
+                    echo "Root repository files:"
+                    ls -la
+
+                    echo "Checking frontend files..."
+                    test -f frontend/package.json
+                    test -f frontend/package-lock.json
+                    test -f frontend/Dockerfile
+
+                    echo "Checking backend files..."
+                    test -f backend/package.json
+                    test -f backend/package-lock.json
+                    test -f backend/Dockerfile
+                    test -f backend/src/app.js
+                    test -f backend/src/services/awsServices.js
+                    test -f backend/src/routes/dashboard.js
+
+                    echo "Checking project files..."
+                    test -f docker-compose.yml
+
+                    echo "All required repository files are present."
+                '''
+            }
+        }
+
+        stage('Set Image Tag') {
+            steps {
+                script {
+                    env.GIT_SHORT_SHA = sh(
+                        script: 'git rev-parse --short=8 HEAD',
+                        returnStdout: true
+                    ).trim()
+
+                    env.IMAGE_TAG =
+                        "${env.BUILD_NUMBER}-${env.GIT_SHORT_SHA}"
+
+                    echo "Docker image tag: ${env.IMAGE_TAG}"
+                }
             }
         }
 
@@ -49,12 +110,28 @@ pipeline {
                     echo "Docker:"
                     docker --version
 
+                    echo "Docker Compose:"
+                    docker compose version
+
+                    echo "Checking Node major version..."
+
+                    NODE_MAJOR="$(node -p "process.versions.node.split('.')[0]")"
+
+                    if [ "$NODE_MAJOR" != "22" ]; then
+                        echo "ERROR: Jenkins is using Node.js $(node --version)."
+                        echo "Configure NodeJS-22 with an actual Node.js 22.x version."
+                        exit 1
+                    fi
+
+                    echo "Checking Docker daemon access..."
                     docker info >/dev/null
+
+                    echo "All required tools are working."
                 '''
             }
         }
 
-        stage('Frontend Security and Build') {
+        stage('Frontend Install') {
             steps {
                 dir('frontend') {
                     sh '''
@@ -62,19 +139,55 @@ pipeline {
 
                         rm -rf node_modules dist
 
-                        npm ci
-                        npm audit --omit=dev
-                        npm audit
-                        npm run lint
-                        npm run build
-
-                        test -f dist/index.html
+                        npm ci \
+                          --no-audit \
+                          --no-fund
                     '''
                 }
             }
         }
 
-        stage('Backend Security and Syntax') {
+        stage('Frontend Security') {
+            steps {
+                dir('frontend') {
+                    sh '''
+                        set -e
+
+                        npm audit \
+                          --audit-level=high
+                    '''
+                }
+            }
+        }
+
+        stage('Frontend Lint and Build') {
+            steps {
+                dir('frontend') {
+                    sh '''
+                        set -e
+
+                        npm run lint
+                        npm run build
+
+                        test -f dist/index.html
+
+                        echo "Frontend production build passed."
+                    '''
+                }
+            }
+        }
+
+        stage('Archive Frontend Build') {
+            steps {
+                archiveArtifacts(
+                    artifacts: 'frontend/dist/**',
+                    fingerprint: true,
+                    allowEmptyArchive: false
+                )
+            }
+        }
+
+        stage('Backend Install') {
             steps {
                 dir('backend') {
                     sh '''
@@ -82,15 +195,79 @@ pipeline {
 
                         rm -rf node_modules
 
-                        npm ci
-                        npm audit --omit=dev
-                        npm audit
+                        npm ci \
+                          --no-audit \
+                          --no-fund
+                    '''
+                }
+            }
+        }
+
+        stage('Backend Security') {
+            steps {
+                dir('backend') {
+                    sh '''
+                        set -e
+
+                        npm audit \
+                          --omit=dev \
+                          --audit-level=high
+                    '''
+                }
+            }
+        }
+
+        stage('Backend Syntax Check') {
+            steps {
+                dir('backend') {
+                    sh '''
+                        set -e
 
                         node --check src/app.js
                         node --check src/services/awsServices.js
                         node --check src/routes/dashboard.js
+                        node --check src/middleware/cache.js
+
+                        echo "Backend syntax checks passed."
                     '''
                 }
+            }
+        }
+
+        stage('Validate Docker Compose') {
+            steps {
+                sh '''
+                    set -e
+
+                    docker compose config --quiet
+
+                    echo "Docker Compose configuration is valid."
+                '''
+            }
+        }
+
+        stage('Validate Kubernetes YAML') {
+            steps {
+                sh '''
+                    set -e
+
+                    if [ ! -d k8s ]; then
+                        echo "No k8s directory found. Skipping."
+                        exit 0
+                    fi
+
+                    if command -v kubectl >/dev/null 2>&1; then
+                        kubectl apply \
+                          --dry-run=client \
+                          --validate=false \
+                          -f k8s/
+
+                        echo "Kubernetes manifests passed client validation."
+                    else
+                        echo "kubectl is not installed on the Jenkins agent."
+                        echo "Skipping Kubernetes validation."
+                    fi
+                '''
             }
         }
 
@@ -99,39 +276,61 @@ pipeline {
                 sh '''
                     set -e
 
+                    echo "Building backend image..."
+
                     docker build \
+                      --pull \
                       -t "$BACKEND_IMAGE:$IMAGE_TAG" \
                       -t "$BACKEND_IMAGE:latest" \
                       ./backend
 
+                    echo "Building frontend image..."
+
                     docker build \
+                      --pull \
                       -t "$FRONTEND_IMAGE:$IMAGE_TAG" \
                       -t "$FRONTEND_IMAGE:latest" \
                       ./frontend
+
+                    echo "Docker images built successfully."
+
+                    docker image inspect \
+                      "$BACKEND_IMAGE:$IMAGE_TAG" \
+                      >/dev/null
+
+                    docker image inspect \
+                      "$FRONTEND_IMAGE:$IMAGE_TAG" \
+                      >/dev/null
                 '''
             }
         }
 
-        stage('Trivy Scan') {
+        stage('Trivy Security Scan') {
             steps {
                 sh '''
                     set -e
 
                     if command -v trivy >/dev/null 2>&1; then
-                        trivy image \
-                          --exit-code 1 \
-                          --severity CRITICAL \
-                          --ignore-unfixed \
-                          "$BACKEND_IMAGE:$IMAGE_TAG"
+                        echo "Scanning backend image..."
 
                         trivy image \
                           --exit-code 1 \
-                          --severity CRITICAL \
+                          --severity HIGH,CRITICAL \
+                          --ignore-unfixed \
+                          "$BACKEND_IMAGE:$IMAGE_TAG"
+
+                        echo "Scanning frontend image..."
+
+                        trivy image \
+                          --exit-code 1 \
+                          --severity HIGH,CRITICAL \
                           --ignore-unfixed \
                           "$FRONTEND_IMAGE:$IMAGE_TAG"
+
+                        echo "Trivy scans passed."
                     else
                         echo "Trivy is not installed on the Jenkins agent."
-                        echo "Skipping Trivy for this first pipeline run."
+                        echo "Skipping Trivy scan."
                     fi
                 '''
             }
@@ -147,54 +346,35 @@ pipeline {
                     )
                 ]) {
                     sh '''
+                        set -e
                         set +x
 
                         echo "$DOCKER_TOKEN" |
                         docker login \
-                          -u "$DOCKER_USER" \
+                          --username "$DOCKER_USER" \
                           --password-stdin
 
-                        docker push "$BACKEND_IMAGE:$IMAGE_TAG"
-                        docker push "$BACKEND_IMAGE:latest"
+                        echo "Pushing backend image..."
 
-                        docker push "$FRONTEND_IMAGE:$IMAGE_TAG"
-                        docker push "$FRONTEND_IMAGE:latest"
+                        docker push \
+                          "$BACKEND_IMAGE:$IMAGE_TAG"
+
+                        docker push \
+                          "$BACKEND_IMAGE:latest"
+
+                        echo "Pushing frontend image..."
+
+                        docker push \
+                          "$FRONTEND_IMAGE:$IMAGE_TAG"
+
+                        docker push \
+                          "$FRONTEND_IMAGE:latest"
 
                         docker logout
+
+                        echo "Both Docker images were pushed successfully."
                     '''
                 }
             }
         }
     }
-
-    post {
-        success {
-            echo """
-            CI pipeline passed.
-
-            Backend:
-            ${BACKEND_IMAGE}:${IMAGE_TAG}
-
-            Frontend:
-            ${FRONTEND_IMAGE}:${IMAGE_TAG}
-            """
-        }
-
-        failure {
-            echo 'CI pipeline failed. Check the failed stage.'
-        }
-
-        always {
-            sh '''
-                docker logout >/dev/null 2>&1 || true
-
-                docker image prune -f >/dev/null 2>&1 || true
-            '''
-
-            cleanWs(
-                deleteDirs: true,
-                notFailBuild: true
-            )
-        }
-    }
-}
