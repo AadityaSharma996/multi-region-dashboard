@@ -1,0 +1,200 @@
+pipeline {
+    agent {
+        label 'adi'
+    }
+
+    tools {
+        nodejs 'NodeJS-22'
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        skipDefaultCheckout(true)
+    }
+
+    environment {
+        DOCKERHUB_USERNAME = 'aadityasharma96'
+
+        BACKEND_IMAGE =
+            "${DOCKERHUB_USERNAME}/multi-region-dashboard-backend"
+
+        FRONTEND_IMAGE =
+            "${DOCKERHUB_USERNAME}/multi-region-dashboard-frontend"
+
+        IMAGE_TAG = "${BUILD_NUMBER}"
+    }
+
+    stages {
+        stage('Clean Workspace') {
+            steps {
+                deleteDir()
+            }
+        }
+
+        stage('Check Tools') {
+            steps {
+                sh '''
+                    set -e
+
+                    echo "Git:"
+                    git --version
+
+                    echo "Node:"
+                    node --version
+
+                    echo "npm:"
+                    npm --version
+
+                    echo "Docker:"
+                    docker --version
+
+                    docker info >/dev/null
+                '''
+            }
+        }
+
+        stage('Frontend Security and Build') {
+            steps {
+                dir('frontend') {
+                    sh '''
+                        set -e
+
+                        rm -rf node_modules dist
+
+                        npm ci
+                        npm audit --omit=dev
+                        npm audit
+                        npm run lint
+                        npm run build
+
+                        test -f dist/index.html
+                    '''
+                }
+            }
+        }
+
+        stage('Backend Security and Syntax') {
+            steps {
+                dir('backend') {
+                    sh '''
+                        set -e
+
+                        rm -rf node_modules
+
+                        npm ci
+                        npm audit --omit=dev
+                        npm audit
+
+                        node --check src/app.js
+                        node --check src/services/awsServices.js
+                        node --check src/routes/dashboard.js
+                    '''
+                }
+            }
+        }
+
+        stage('Build Docker Images') {
+            steps {
+                sh '''
+                    set -e
+
+                    docker build \
+                      -t "$BACKEND_IMAGE:$IMAGE_TAG" \
+                      -t "$BACKEND_IMAGE:latest" \
+                      ./backend
+
+                    docker build \
+                      -t "$FRONTEND_IMAGE:$IMAGE_TAG" \
+                      -t "$FRONTEND_IMAGE:latest" \
+                      ./frontend
+                '''
+            }
+        }
+
+        stage('Trivy Scan') {
+            steps {
+                sh '''
+                    set -e
+
+                    if command -v trivy >/dev/null 2>&1; then
+                        trivy image \
+                          --exit-code 1 \
+                          --severity CRITICAL \
+                          --ignore-unfixed \
+                          "$BACKEND_IMAGE:$IMAGE_TAG"
+
+                        trivy image \
+                          --exit-code 1 \
+                          --severity CRITICAL \
+                          --ignore-unfixed \
+                          "$FRONTEND_IMAGE:$IMAGE_TAG"
+                    else
+                        echo "Trivy is not installed on the Jenkins agent."
+                        echo "Skipping Trivy for this first pipeline run."
+                    fi
+                '''
+            }
+        }
+
+        stage('Docker Login and Push') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerHubCred',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set +x
+
+                        echo "$DOCKER_TOKEN" |
+                        docker login \
+                          -u "$DOCKER_USER" \
+                          --password-stdin
+
+                        docker push "$BACKEND_IMAGE:$IMAGE_TAG"
+                        docker push "$BACKEND_IMAGE:latest"
+
+                        docker push "$FRONTEND_IMAGE:$IMAGE_TAG"
+                        docker push "$FRONTEND_IMAGE:latest"
+
+                        docker logout
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo """
+            CI pipeline passed.
+
+            Backend:
+            ${BACKEND_IMAGE}:${IMAGE_TAG}
+
+            Frontend:
+            ${FRONTEND_IMAGE}:${IMAGE_TAG}
+            """
+        }
+
+        failure {
+            echo 'CI pipeline failed. Check the failed stage.'
+        }
+
+        always {
+            sh '''
+                docker logout >/dev/null 2>&1 || true
+
+                docker image prune -f >/dev/null 2>&1 || true
+            '''
+
+            cleanWs(
+                deleteDirs: true,
+                notFailBuild: true
+            )
+        }
+    }
+}
