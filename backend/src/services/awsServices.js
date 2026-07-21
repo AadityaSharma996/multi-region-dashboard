@@ -136,7 +136,10 @@ async function getS3Data(targetRegion) {
         const locRes = await client.send(
           new GetBucketLocationCommand({ Bucket: b.Name })
         );
-        const region = locRes.LocationConstraint || "us-east-1";
+        const location = locRes.LocationConstraint;
+        const region =
+          !location ? "us-east-1" : location === "EU" ? "eu-west-1" : location;
+
         return { name: b.Name, region, createdAt: b.CreationDate };
       } catch {
         return null;

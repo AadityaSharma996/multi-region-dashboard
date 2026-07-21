@@ -28,3 +28,5 @@ finish-reviewed-fixes.sh
 final-precommit-fix.sh
 .last-fix-backup-*/
 fix-last-error-and-verify.sh
+.repo-review-backup-*/
+apply-multi-region-dashboard-reviewed-fixes.sh

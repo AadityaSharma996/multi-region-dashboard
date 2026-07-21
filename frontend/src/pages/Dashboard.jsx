@@ -6,19 +6,20 @@ import RegionCard from "../components/RegionCard";
 
 export default function Dashboard() {
   const { regions, regionData, loading, error, lastUpdated, refresh } = useAwsData(60000);
-  const [selectedRegions, setSelectedRegions] = useState(new Set());
+  const [selectedRegions, setSelectedRegions] = useState(null);
 
-  const toggleRegion = (r) =>
-    setSelectedRegions((prev) => {
-      const next = new Set(prev);
-      next.has(r) ? next.delete(r) : next.add(r);
+  const toggleRegion = (region) =>
+    setSelectedRegions((previous) => {
+      const next = new Set(previous ?? regions);
+      next.has(region) ? next.delete(region) : next.add(region);
       return next;
     });
 
+  const effectiveSelection = selectedRegions ?? new Set(regions);
   const visibleRegions =
-    selectedRegions.size === 0
+    selectedRegions === null
       ? regions
-      : regions.filter((r) => selectedRegions.has(r));
+      : regions.filter((region) => selectedRegions.has(region));
 
   return (
     <div style={{ minHeight: "100vh", background: "#f8fafc", fontFamily: "system-ui, sans-serif" }}>
@@ -27,9 +28,9 @@ export default function Dashboard() {
       <div style={{ display: "flex" }}>
         <Sidebar
           regions={regions}
-          selectedRegions={selectedRegions}
+          selectedRegions={effectiveSelection}
           onToggle={toggleRegion}
-          onSelectAll={() => setSelectedRegions(new Set(regions))}
+          onSelectAll={() => setSelectedRegions(null)}
           onClearAll={() => setSelectedRegions(new Set())}
         />
 
