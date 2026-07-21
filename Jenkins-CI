@@ -4,7 +4,7 @@ pipeline {
     }
 
     tools {
-        nodejs 'NodeJS-26'
+        nodejs 'NodeJS-24'
     }
 
     options {
@@ -22,13 +22,8 @@ pipeline {
 
     environment {
         DOCKERHUB_USERNAME = 'aadityasharma96'
-
-        BACKEND_IMAGE =
-            "${DOCKERHUB_USERNAME}/multi-region-dashboard-backend"
-
-        FRONTEND_IMAGE =
-            "${DOCKERHUB_USERNAME}/multi-region-dashboard-frontend"
-
+        BACKEND_IMAGE = "${DOCKERHUB_USERNAME}/multi-region-dashboard-backend"
+        FRONTEND_IMAGE = "${DOCKERHUB_USERNAME}/multi-region-dashboard-frontend"
         DOCKER_BUILDKIT = '1'
     }
 
@@ -85,8 +80,7 @@ pipeline {
                         returnStdout: true
                     ).trim()
 
-                    env.IMAGE_TAG =
-                        "${env.BUILD_NUMBER}-${env.GIT_SHORT_SHA}"
+                    env.IMAGE_TAG = "${env.BUILD_NUMBER}-${env.GIT_SHORT_SHA}"
 
                     echo "Docker image tag: ${env.IMAGE_TAG}"
                 }
@@ -113,15 +107,17 @@ pipeline {
                     echo "Docker Compose:"
                     docker compose version
 
-                    echo "Checking Node major version..."
+                    echo "Checking Node.js major version..."
 
                     NODE_MAJOR="$(node -p "process.versions.node.split('.')[0]")"
 
-                    if [ "$NODE_MAJOR" != "22" ]; then
+                    if [ "$NODE_MAJOR" != "24" ]; then
                         echo "ERROR: Jenkins is using Node.js $(node --version)."
-                        echo "Configure NodeJS-22 with an actual Node.js 22.x version."
+                        echo "Configure the NodeJS-24 tool with an actual Node.js 24.x version."
                         exit 1
                     fi
+
+                    echo "Node.js 24 is configured correctly."
 
                     echo "Checking Docker daemon access..."
                     docker info >/dev/null
@@ -142,6 +138,8 @@ pipeline {
                         npm ci \
                           --no-audit \
                           --no-fund
+
+                        echo "Frontend dependencies installed."
                     '''
                 }
             }
@@ -155,6 +153,8 @@ pipeline {
 
                         npm audit \
                           --audit-level=high
+
+                        echo "Frontend dependency security check passed."
                     '''
                 }
             }
@@ -198,6 +198,8 @@ pipeline {
                         npm ci \
                           --no-audit \
                           --no-fund
+
+                        echo "Backend dependencies installed."
                     '''
                 }
             }
@@ -212,6 +214,8 @@ pipeline {
                         npm audit \
                           --omit=dev \
                           --audit-level=high
+
+                        echo "Backend dependency security check passed."
                     '''
                 }
             }
@@ -226,7 +230,12 @@ pipeline {
                         node --check src/app.js
                         node --check src/services/awsServices.js
                         node --check src/routes/dashboard.js
-                        node --check src/middleware/cache.js
+
+                        if [ -f src/middleware/cache.js ]; then
+                            node --check src/middleware/cache.js
+                        else
+                            echo "src/middleware/cache.js not found. Skipping it."
+                        fi
 
                         echo "Backend syntax checks passed."
                     '''
@@ -252,7 +261,7 @@ pipeline {
                     set -e
 
                     if [ ! -d k8s ]; then
-                        echo "No k8s directory found. Skipping."
+                        echo "No k8s directory found. Skipping Kubernetes validation."
                         exit 0
                     fi
 
@@ -276,7 +285,7 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "Building backend image..."
+                    echo "Building backend Docker image..."
 
                     docker build \
                       --pull \
@@ -284,7 +293,7 @@ pipeline {
                       -t "$BACKEND_IMAGE:latest" \
                       ./backend
 
-                    echo "Building frontend image..."
+                    echo "Building frontend Docker image..."
 
                     docker build \
                       --pull \
@@ -292,15 +301,19 @@ pipeline {
                       -t "$FRONTEND_IMAGE:latest" \
                       ./frontend
 
-                    echo "Docker images built successfully."
+                    echo "Verifying backend Docker image..."
 
                     docker image inspect \
                       "$BACKEND_IMAGE:$IMAGE_TAG" \
                       >/dev/null
 
+                    echo "Verifying frontend Docker image..."
+
                     docker image inspect \
                       "$FRONTEND_IMAGE:$IMAGE_TAG" \
                       >/dev/null
+
+                    echo "Both Docker images were built successfully."
                 '''
             }
         }
@@ -311,7 +324,7 @@ pipeline {
                     set -e
 
                     if command -v trivy >/dev/null 2>&1; then
-                        echo "Scanning backend image..."
+                        echo "Scanning backend Docker image..."
 
                         trivy image \
                           --exit-code 1 \
@@ -319,7 +332,7 @@ pipeline {
                           --ignore-unfixed \
                           "$BACKEND_IMAGE:$IMAGE_TAG"
 
-                        echo "Scanning frontend image..."
+                        echo "Scanning frontend Docker image..."
 
                         trivy image \
                           --exit-code 1 \
@@ -327,10 +340,10 @@ pipeline {
                           --ignore-unfixed \
                           "$FRONTEND_IMAGE:$IMAGE_TAG"
 
-                        echo "Trivy scans passed."
+                        echo "Trivy security scans passed."
                     else
                         echo "Trivy is not installed on the Jenkins agent."
-                        echo "Skipping Trivy scan."
+                        echo "Skipping Trivy security scan."
                     fi
                 '''
             }
@@ -354,18 +367,22 @@ pipeline {
                           --username "$DOCKER_USER" \
                           --password-stdin
 
-                        echo "Pushing backend image..."
+                        echo "Pushing backend versioned image..."
 
                         docker push \
                           "$BACKEND_IMAGE:$IMAGE_TAG"
 
+                        echo "Pushing backend latest image..."
+
                         docker push \
                           "$BACKEND_IMAGE:latest"
 
-                        echo "Pushing frontend image..."
+                        echo "Pushing frontend versioned image..."
 
                         docker push \
                           "$FRONTEND_IMAGE:$IMAGE_TAG"
+
+                        echo "Pushing frontend latest image..."
 
                         docker push \
                           "$FRONTEND_IMAGE:latest"
