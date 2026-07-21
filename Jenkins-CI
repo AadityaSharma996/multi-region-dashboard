@@ -116,6 +116,9 @@ pipeline {
                     echo "Docker Compose:"
                     docker compose version
 
+                    echo "Docker Buildx:"
+                    docker buildx version
+
                     echo "Checking Node.js major version..."
 
                     NODE_MAJOR="$(
