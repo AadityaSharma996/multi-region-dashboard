@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: aws-dashboard-frontend-service
+spec:
+  selector:
+    app: aws-dashboard-frontend
+  ports:
+    - port: 80
+      targetPort: 80
+  type: NodePort

@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aws-dashboard-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aws-dashboard-backend
+  template:
+    metadata:
+      labels:
+        app: aws-dashboard-backend
+    spec:
+      containers:
+      - name: backend
+        image: aws-dashboard-backend:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 4000
+        envFrom:
+        - secretRef:
+            name: aws-secret

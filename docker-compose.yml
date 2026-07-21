@@ -1,0 +1,16 @@
+services:
+  backend:
+    build: ./backend
+    container_name: aws-dashboard-backend
+    ports:
+      - "4000:4000"
+    env_file:
+      - ./backend/.env
+
+  frontend:
+    build: ./frontend
+    container_name: aws-dashboard-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend

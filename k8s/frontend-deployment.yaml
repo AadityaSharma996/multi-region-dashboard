@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aws-dashboard-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aws-dashboard-frontend
+  template:
+    metadata:
+      labels:
+        app: aws-dashboard-frontend
+    spec:
+      containers:
+      - name: frontend
+        image: aws-dashboard-frontend:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 80
