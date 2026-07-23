@@ -7,6 +7,14 @@ pipeline {
         nodejs 'NodeJS-24'
     }
 
+    parameters {
+        booleanParam(
+            name: 'RUN_CD',
+            defaultValue: false,
+            description: 'Trigger MRD-CD after images are pushed'
+        )
+    }
+
     options {
         timestamps()
         disableConcurrentBuilds()
@@ -22,14 +30,10 @@ pipeline {
 
     environment {
         DOCKERHUB_USERNAME = 'aadityasharma96'
-
-        BACKEND_IMAGE =
-            "${DOCKERHUB_USERNAME}/multi-region-dashboard-backend"
-
-        FRONTEND_IMAGE =
-            "${DOCKERHUB_USERNAME}/multi-region-dashboard-frontend"
-
+        BACKEND_IMAGE = "${DOCKERHUB_USERNAME}/multi-region-dashboard-backend"
+        FRONTEND_IMAGE = "${DOCKERHUB_USERNAME}/multi-region-dashboard-frontend"
         DOCKER_BUILDKIT = '1'
+        TRIVY_CACHE_DIR = '/var/lib/jenkins/.cache/trivy'
     }
 
     stages {
@@ -50,19 +54,10 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "Current Jenkins workspace:"
-                    pwd
-
-                    echo "Repository files:"
-                    ls -la
-
-                    echo "Checking frontend files..."
-
                     test -f frontend/package.json
                     test -f frontend/package-lock.json
                     test -f frontend/Dockerfile
-
-                    echo "Checking backend files..."
+                    test -f frontend/nginx.conf
 
                     test -f backend/package.json
                     test -f backend/package-lock.json
@@ -71,11 +66,12 @@ pipeline {
                     test -f backend/src/services/awsServices.js
                     test -f backend/src/routes/dashboard.js
 
-                    echo "Checking project files..."
-
                     test -f docker-compose.yml
+                    test -f k8s/base/kustomization.yaml
+                    test -f k8s/overlays/production/kustomization.yaml
+                    test -f gitops/Jenkins-CD
 
-                    echo "All required repository files are present."
+                    echo "Repository verification passed."
                 '''
             }
         }
@@ -88,8 +84,7 @@ pipeline {
                         returnStdout: true
                     ).trim()
 
-                    env.IMAGE_TAG =
-                        "${env.BUILD_NUMBER}-${env.GIT_SHORT_SHA}"
+                    env.IMAGE_TAG = "${env.BUILD_NUMBER}-${env.GIT_SHORT_SHA}"
 
                     echo "Docker image tag: ${env.IMAGE_TAG}"
                 }
@@ -101,43 +96,41 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "Git:"
                     git --version
-
-                    echo "Node:"
                     node --version
-
-                    echo "npm:"
                     npm --version
-
-                    echo "Docker:"
                     docker --version
-
-                    echo "Docker Compose:"
                     docker compose version
-
-                    echo "Docker Buildx:"
                     docker buildx version
+                    trivy --version
+                    kustomize version
+                    kubectl version --client
+                    aws --version
 
-                    echo "Checking Node.js major version..."
-
-                    NODE_MAJOR="$(
-                        node -p "process.versions.node.split('.')[0]"
-                    )"
+                    NODE_MAJOR="$(node -p "process.versions.node.split('.')[0]")"
 
                     if [ "$NODE_MAJOR" != "24" ]; then
-                        echo "ERROR: Jenkins is using Node.js $(node --version)."
-                        echo "Configure NodeJS-24 with Node.js 24.x."
+                        echo "ERROR: Node.js 24 is required."
                         exit 1
                     fi
 
-                    echo "Node.js 24 is configured correctly."
-
-                    echo "Checking Docker daemon access..."
+                    if ! kubectl version --client -o yaml |
+                        grep -Eq 'gitVersion: v1\\.35\\.'; then
+                        echo "ERROR: kubectl 1.35.x is required."
+                        exit 1
+                    fi
 
                     docker info >/dev/null
 
+                    curl -fsS \
+                      http://127.0.0.1:9000/api/system/status |
+                      grep -q '"status":"UP"'
+
+                    test -d "$TRIVY_CACHE_DIR"
+                    test -w "$TRIVY_CACHE_DIR"
+
                     echo "All required tools are working."
+                    echo "SonarQube is running."
                 '''
             }
         }
@@ -167,9 +160,9 @@ pipeline {
                         set -e
 
                         npm audit \
-                          --audit-level=high
+                          --audit-level=critical
 
-                        echo "Frontend security audit passed."
+                        echo "Frontend npm audit passed."
                     '''
                 }
             }
@@ -182,12 +175,11 @@ pipeline {
                         set -e
 
                         npm run lint
-
                         npm run build
 
                         test -f dist/index.html
 
-                        echo "Frontend production build passed."
+                        echo "Frontend build passed."
                     '''
                 }
             }
@@ -229,9 +221,9 @@ pipeline {
 
                         npm audit \
                           --omit=dev \
-                          --audit-level=high
+                          --audit-level=critical
 
-                        echo "Backend security audit passed."
+                        echo "Backend npm audit passed."
                     '''
                 }
             }
@@ -249,12 +241,74 @@ pipeline {
 
                         if [ -f src/middleware/cache.js ]; then
                             node --check src/middleware/cache.js
-                        else
-                            echo "cache.js does not exist. Skipping it."
                         fi
 
                         echo "Backend syntax checks passed."
                     '''
+                }
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                script {
+                    def scannerHome = tool 'SonarScanner'
+
+                    withEnv(["SCANNER_HOME=${scannerHome}"]) {
+                        withSonarQubeEnv('SonarQube-Server') {
+                            sh '''
+                                set -e
+
+                                "$SCANNER_HOME/bin/sonar-scanner" \
+                                  -Dsonar.projectKey=multi-region-dashboard \
+                                  -Dsonar.projectName="Multi Region Dashboard" \
+                                  -Dsonar.projectVersion="$IMAGE_TAG" \
+                                  -Dsonar.sources=frontend/src,backend/src \
+                                  -Dsonar.exclusions="**/node_modules/**,frontend/dist/**,**/coverage/**" \
+                                  -Dsonar.sourceEncoding=UTF-8
+
+                                echo "SonarQube analysis completed."
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('SonarQube Quality Gate') {
+            steps {
+                timeout(time: 10, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('OWASP Dependency Check') {
+            steps {
+                timeout(time: 30, unit: 'MINUTES') {
+                    dependencyCheck(
+                        odcInstallation: 'OWASP-Dependency-Check',
+                        nvdCredentialsId: 'nvd-api-key',
+                        additionalArguments: '--project "Multi Region Dashboard" --scan frontend --scan backend --format XML --format HTML --out dependency-check-report',
+                        stopBuild: true
+                    )
+                }
+            }
+
+            post {
+                always {
+                    dependencyCheckPublisher(
+                        pattern: 'dependency-check-report/dependency-check-report.xml',
+                        failedTotalCritical: 1,
+                        stopBuild: true,
+                        skipNoReportFiles: true
+                    )
+
+                    archiveArtifacts(
+                        artifacts: 'dependency-check-report/**',
+                        allowEmptyArchive: true,
+                        fingerprint: true
+                    )
                 }
             }
         }
@@ -275,10 +329,7 @@ pipeline {
                     trap cleanup_ci_env EXIT
 
                     if [ ! -f backend/.env ]; then
-                        echo "Creating temporary backend/.env for CI validation."
-
                         : > backend/.env
-
                         CREATED_ENV=1
                     fi
 
@@ -287,7 +338,7 @@ pipeline {
                     AWS_DEFAULT_REGION=us-east-1 \
                     docker compose config --quiet
 
-                    echo "Docker Compose configuration is valid."
+                    echo "Docker Compose validation passed."
                 '''
             }
         }
@@ -297,23 +348,29 @@ pipeline {
                 sh '''
                     set -e
 
-                    if [ ! -d k8s ]; then
-                        echo "No k8s directory found."
-                        echo "Skipping Kubernetes validation."
-                        exit 0
-                    fi
+                    RENDERED_FILE="$(mktemp)"
 
-                    if command -v kubectl >/dev/null 2>&1; then
-                        kubectl apply \
-                          --dry-run=client \
-                          --validate=false \
-                          -f k8s/
+                    cleanup_rendered_file() {
+                        rm -f "$RENDERED_FILE"
+                    }
 
-                        echo "Kubernetes manifests passed validation."
-                    else
-                        echo "kubectl is not installed on the Jenkins agent."
-                        echo "Skipping Kubernetes validation."
-                    fi
+                    trap cleanup_rendered_file EXIT
+
+                    kustomize build \
+                      k8s/overlays/production \
+                      > "$RENDERED_FILE"
+
+                    test -s "$RENDERED_FILE"
+
+                    grep -Fq "kind: Namespace" "$RENDERED_FILE"
+                    grep -Fq "name: dashboard" "$RENDERED_FILE"
+                    grep -Fq "name: aws-dashboard-backend" "$RENDERED_FILE"
+                    grep -Fq "name: aws-dashboard-frontend" "$RENDERED_FILE"
+                    grep -Fq "name: aws-dashboard-backend-service" "$RENDERED_FILE"
+                    grep -Fq "name: aws-dashboard-frontend-service" "$RENDERED_FILE"
+                    grep -Fq "nodePort: 30080" "$RENDERED_FILE"
+
+                    echo "Kubernetes manifest validation passed."
                 '''
             }
         }
@@ -323,15 +380,11 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "Building backend Docker image..."
-
                     docker build \
                       --pull \
                       -t "$BACKEND_IMAGE:$IMAGE_TAG" \
                       -t "$BACKEND_IMAGE:latest" \
                       ./backend
-
-                    echo "Building frontend Docker image..."
 
                     docker build \
                       --pull \
@@ -339,19 +392,15 @@ pipeline {
                       -t "$FRONTEND_IMAGE:latest" \
                       ./frontend
 
-                    echo "Verifying backend image..."
-
                     docker image inspect \
                       "$BACKEND_IMAGE:$IMAGE_TAG" \
                       >/dev/null
-
-                    echo "Verifying frontend image..."
 
                     docker image inspect \
                       "$FRONTEND_IMAGE:$IMAGE_TAG" \
                       >/dev/null
 
-                    echo "Both Docker images were built successfully."
+                    echo "Docker image builds passed."
                 '''
             }
         }
@@ -361,28 +410,23 @@ pipeline {
                 sh '''
                     set -e
 
-                    if command -v trivy >/dev/null 2>&1; then
-                        echo "Scanning backend Docker image..."
+                    trivy image \
+                      --cache-dir "$TRIVY_CACHE_DIR" \
+                      --timeout 15m \
+                      --exit-code 1 \
+                      --severity CRITICAL \
+                      --ignore-unfixed \
+                      "$BACKEND_IMAGE:$IMAGE_TAG"
 
-                        trivy image \
-                          --exit-code 1 \
-                          --severity CRITICAL \
-                          --ignore-unfixed \
-                          "$BACKEND_IMAGE:$IMAGE_TAG"
+                    trivy image \
+                      --cache-dir "$TRIVY_CACHE_DIR" \
+                      --timeout 15m \
+                      --exit-code 1 \
+                      --severity CRITICAL \
+                      --ignore-unfixed \
+                      "$FRONTEND_IMAGE:$IMAGE_TAG"
 
-                        echo "Scanning frontend Docker image..."
-
-                        trivy image \
-                          --exit-code 1 \
-                          --severity CRITICAL \
-                          --ignore-unfixed \
-                          "$FRONTEND_IMAGE:$IMAGE_TAG"
-
-                        echo "Trivy security scans passed."
-                    else
-                        echo "Trivy is not installed on the Jenkins agent."
-                        echo "Skipping Trivy security scan."
-                    fi
+                    echo "Trivy security scans passed."
                 '''
             }
         }
@@ -405,32 +449,69 @@ pipeline {
                           --username "$DOCKER_USER" \
                           --password-stdin
 
-                        echo "Pushing backend versioned image..."
+                        docker push "$BACKEND_IMAGE:$IMAGE_TAG"
+                        docker push "$BACKEND_IMAGE:latest"
 
-                        docker push \
-                          "$BACKEND_IMAGE:$IMAGE_TAG"
-
-                        echo "Pushing backend latest image..."
-
-                        docker push \
-                          "$BACKEND_IMAGE:latest"
-
-                        echo "Pushing frontend versioned image..."
-
-                        docker push \
-                          "$FRONTEND_IMAGE:$IMAGE_TAG"
-
-                        echo "Pushing frontend latest image..."
-
-                        docker push \
-                          "$FRONTEND_IMAGE:latest"
+                        docker push "$FRONTEND_IMAGE:$IMAGE_TAG"
+                        docker push "$FRONTEND_IMAGE:latest"
 
                         docker logout
 
-                        echo "Both Docker images were pushed successfully."
+                        echo "Docker images pushed successfully."
                     '''
                 }
             }
+        }
+
+        stage('Trigger CD') {
+            when {
+                expression {
+                    return params.RUN_CD
+                }
+            }
+
+            steps {
+                build(
+                    job: 'MRD-CD',
+                    parameters: [
+                        string(
+                            name: 'IMAGE_TAG',
+                            value: env.IMAGE_TAG
+                        )
+                    ],
+                    wait: true,
+                    propagate: true
+                )
+            }
+        }
+    }
+
+    post {
+        always {
+            sh '''
+                docker logout >/dev/null 2>&1 || true
+
+                if [ -n "${IMAGE_TAG:-}" ]; then
+                    docker image rm \
+                      "$BACKEND_IMAGE:$IMAGE_TAG" \
+                      "$FRONTEND_IMAGE:$IMAGE_TAG" \
+                      "$BACKEND_IMAGE:latest" \
+                      "$FRONTEND_IMAGE:latest" \
+                      >/dev/null 2>&1 || true
+                fi
+            '''
+        }
+
+        success {
+            echo "CI pipeline completed successfully."
+        }
+
+        unstable {
+            echo "CI pipeline completed with security warnings."
+        }
+
+        failure {
+            echo "CI pipeline failed. Check the failed stage."
         }
     }
 }
