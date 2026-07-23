@@ -1,0 +1,208 @@
+pipeline {
+    agent {
+        label 'adi'
+    }
+
+    parameters {
+        string(
+            name: 'IMAGE_TAG',
+            defaultValue: '',
+            description: 'Docker image tag created by MRD-CI',
+            trim: true
+        )
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        skipDefaultCheckout(true)
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    environment {
+        REPOSITORY_URL = 'https://github.com/AadityaSharma996/multi-region-dashboard.git'
+        BRANCH_NAME = 'main'
+        EKS_CLUSTER_NAME = 'multi-region-dashboard'
+        AWS_REGION = 'us-east-1'
+        KUSTOMIZE_DIR = 'k8s/overlays/production'
+        KUSTOMIZATION_FILE = 'k8s/overlays/production/kustomization.yaml'
+        BACKEND_IMAGE = 'aadityasharma96/multi-region-dashboard-backend'
+        FRONTEND_IMAGE = 'aadityasharma96/multi-region-dashboard-frontend'
+    }
+
+    stages {
+        stage('Validate Input') {
+            steps {
+                script {
+                    if (!params.IMAGE_TAG?.trim()) {
+                        error('IMAGE_TAG is required.')
+                    }
+
+                    if (!(params.IMAGE_TAG ==~ /^[0-9]+-[a-f0-9]{8}$/)) {
+                        error("Invalid IMAGE_TAG: ${params.IMAGE_TAG}")
+                    }
+
+                    env.IMAGE_TAG = params.IMAGE_TAG.trim()
+                    echo "Deploying image ${env.IMAGE_TAG}"
+                }
+            }
+        }
+
+        stage('Clean Workspace') {
+            steps {
+                deleteDir()
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "*/${env.BRANCH_NAME}"]],
+                    userRemoteConfigs: [[
+                        url: env.REPOSITORY_URL,
+                        credentialsId: 'github-credentials'
+                    ]]
+                ])
+            }
+        }
+
+        stage('Check Files and Tools') {
+            steps {
+                sh '''
+                    set -e
+                    test -f "$KUSTOMIZATION_FILE"
+                    git --version
+                    aws --version
+                    kubectl version --client
+                    python3 --version
+                    kubectl kustomize --help >/dev/null
+                '''
+            }
+        }
+
+        stage('Configure EKS and Secret') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-secret',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh '''
+                        set -e
+                        set +x
+                        export AWS_DEFAULT_REGION="$AWS_REGION"
+                        aws eks update-kubeconfig \
+                          --name "$EKS_CLUSTER_NAME" \
+                          --region "$AWS_REGION"
+                        kubectl get nodes
+                        kubectl create namespace dashboard \
+                          --dry-run=client \
+                          -o yaml | kubectl apply -f -
+                        kubectl create secret generic aws-secret \
+                          --namespace dashboard \
+                          --from-literal=AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
+                          --from-literal=AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
+                          --from-literal=AWS_REGION="$AWS_REGION" \
+                          --dry-run=client \
+                          -o yaml | kubectl apply -f -
+                        echo "Kubernetes secret is ready."
+                    '''
+                }
+            }
+        }
+
+        stage('Update Images') {
+            steps {
+                sh '''
+                    set -e
+                    python3 - <<'PY'
+from pathlib import Path
+import os
+import re
+
+path = Path(os.environ["KUSTOMIZATION_FILE"])
+text = path.read_text()
+tag = os.environ["IMAGE_TAG"]
+images = [
+    os.environ["BACKEND_IMAGE"],
+    os.environ["FRONTEND_IMAGE"],
+]
+
+for image in images:
+    pattern = rf"(name:\s*{re.escape(image)}\s*\n\s*newName:\s*{re.escape(image)}\s*\n\s*newTag:)\s*\S+"
+    text, count = re.subn(pattern, rf"\1 {tag}", text, count=1)
+    if count != 1:
+        raise SystemExit(f"Could not update image: {image}")
+
+path.write_text(text)
+PY
+                    echo "Kubernetes image values updated."
+                '''
+            }
+        }
+
+        stage('Validate Manifests') {
+            steps {
+                sh '''
+                    set -e
+                    RENDERED_FILE="/tmp/mrd-${BUILD_NUMBER}.yaml"
+                    kubectl kustomize "$KUSTOMIZE_DIR" > "$RENDERED_FILE"
+                    test -s "$RENDERED_FILE"
+                    grep -Fq "image: $BACKEND_IMAGE:$IMAGE_TAG" "$RENDERED_FILE"
+                    grep -Fq "image: $FRONTEND_IMAGE:$IMAGE_TAG" "$RENDERED_FILE"
+                    kubectl apply \
+                      --dry-run=client \
+                      --validate=false \
+                      -f "$RENDERED_FILE" \
+                      >/dev/null
+                    rm -f "$RENDERED_FILE"
+                    echo "Kubernetes manifests are valid."
+                '''
+            }
+        }
+
+        stage('Commit and Push') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'github-credentials',
+                        usernameVariable: 'GITHUB_USERNAME',
+                        passwordVariable: 'GITHUB_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set -e
+                        set +x
+                        git config user.name "Jenkins CD"
+                        git config user.email "jenkins-cd@local"
+                        git add "$KUSTOMIZATION_FILE"
+                        if git diff --cached --quiet; then
+                            echo "No deployment change was required."
+                            exit 0
+                        fi
+                        git commit -m "Deploy application image ${IMAGE_TAG}"
+                        git push \
+                          "https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/AadityaSharma996/multi-region-dashboard.git" \
+                          HEAD:main
+                        echo "GitOps update pushed to GitHub."
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "CD pipeline completed successfully."
+        }
+        failure {
+            echo "CD pipeline failed. Check the console output."
+        }
+        always {
+            deleteDir()
+        }
+    }
+}

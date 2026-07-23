@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  - name: aadityasharma96/multi-region-dashboard-backend
+    newName: aadityasharma96/multi-region-dashboard-backend
+    newTag: latest
+  - name: aadityasharma96/multi-region-dashboard-frontend
+    newName: aadityasharma96/multi-region-dashboard-frontend
+    newTag: latest

@@ -30,3 +30,9 @@ final-precommit-fix.sh
 fix-last-error-and-verify.sh
 .repo-review-backup-*/
 apply-multi-region-dashboard-reviewed-fixes.sh
+*.pem
+terra-key
+terra-key.pub
+.terraform/
+*.tfstate
+*.tfstate.*
