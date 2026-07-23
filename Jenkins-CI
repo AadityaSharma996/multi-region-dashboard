@@ -33,7 +33,7 @@ pipeline {
         BACKEND_IMAGE = "${DOCKERHUB_USERNAME}/multi-region-dashboard-backend"
         FRONTEND_IMAGE = "${DOCKERHUB_USERNAME}/multi-region-dashboard-frontend"
         DOCKER_BUILDKIT = '1'
-        TRIVY_CACHE_DIR = '/var/lib/jenkins/.cache/trivy'
+        TRIVY_CACHE_DIR = '/home/ubuntu/.cache/trivy'
     }
 
     stages {
@@ -95,6 +95,10 @@ pipeline {
             steps {
                 sh '''
                     set -e
+
+                    echo "Pipeline user:"
+                    whoami
+                    id
 
                     git --version
                     node --version
