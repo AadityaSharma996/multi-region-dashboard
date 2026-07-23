@@ -1,4 +1,5 @@
-FROM node:20-alpine
+FROM node:24.18.0-alpine
+RUN npm install --global npm@11.18.0 && npm cache clean --force
 
 WORKDIR /app
 
