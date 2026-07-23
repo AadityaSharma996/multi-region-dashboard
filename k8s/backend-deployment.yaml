@@ -2,54 +2,60 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: aws-dashboard-backend
+  namespace: dashboard
 spec:
   replicas: 1
-
+  revisionHistoryLimit: 3
+  progressDeadlineSeconds: 300
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: aws-dashboard-backend
-
   template:
     metadata:
       labels:
         app: aws-dashboard-backend
-
     spec:
+      terminationGracePeriodSeconds: 30
       containers:
         - name: backend
           image: aadityasharma96/multi-region-dashboard-backend:latest
-          imagePullPolicy: Always
-
+          imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 4000
-
+              protocol: TCP
           env:
             - name: PORT
               value: "4000"
-
           envFrom:
             - secretRef:
                 name: aws-secret
-
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
           readinessProbe:
             httpGet:
               path: /health
-              port: 4000
-            initialDelaySeconds: 5
+              port: http
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 6
-
           livenessProbe:
             httpGet:
               path: /health
-              port: 4000
-            initialDelaySeconds: 20
+              port: http
             periodSeconds: 20
             timeoutSeconds: 3
             failureThreshold: 3
-
           resources:
             requests:
               cpu: 100m
