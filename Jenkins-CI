@@ -289,12 +289,11 @@ pipeline {
 
         stage('OWASP Dependency Check') {
             steps {
-                timeout(time: 30, unit: 'MINUTES') {
+                timeout(time: 90, unit: 'MINUTES') {
                     dependencyCheck(
                         odcInstallation: 'OWASP-Dependency-Check',
                         nvdCredentialsId: 'nvd-api-key',
-                        nvdCredentialsId: 'nvd-api-key',
-                        additionalArguments: '--project "Multi Region Dashboard" --scan frontend --scan backend --format XML --format HTML --out dependency-check-report',
+                        additionalArguments: '--project "Multi Region Dashboard" --scan frontend --scan backend --format XML --format HTML --out dependency-check-report --data /home/ubuntu/.cache/dependency-check --nvdMaxRetryCount 10',
                         stopBuild: true
                     )
                 }
