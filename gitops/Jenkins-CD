@@ -149,7 +149,7 @@ PY
                 sh '''
                     set -e
                     RENDERED_FILE="/tmp/mrd-${BUILD_NUMBER}.yaml"
-                    kubectl kustomize "$KUSTOMIZE_DIR" > "$RENDERED_FILE"
+                    kustomize build "$KUSTOMIZE_DIR" > "$RENDERED_FILE"
                     test -s "$RENDERED_FILE"
                     grep -Fq "image: $BACKEND_IMAGE:$IMAGE_TAG" "$RENDERED_FILE"
                     grep -Fq "image: $FRONTEND_IMAGE:$IMAGE_TAG" "$RENDERED_FILE"

@@ -44,11 +44,7 @@ eks_file="$(mktemp)"
 
 trap 'rm -f "$rendered_file" "$eks_file"' EXIT
 
-if command -v kustomize >/dev/null 2>&1; then
-  kustomize build k8s/overlays/production > "$rendered_file"
-else
-  kubectl kustomize k8s/overlays/production > "$rendered_file"
-fi
+kustomize build k8s/overlays/production > "$rendered_file"
 
 if [[ ! -s "$rendered_file" ]]; then
   echo "Kustomize rendered an empty file."
