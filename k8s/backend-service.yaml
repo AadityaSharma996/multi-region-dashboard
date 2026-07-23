@@ -2,14 +2,13 @@ apiVersion: v1
 kind: Service
 metadata:
   name: aws-dashboard-backend-service
+  namespace: dashboard
 spec:
   type: ClusterIP
-
   selector:
     app: aws-dashboard-backend
-
   ports:
     - name: http
       protocol: TCP
       port: 4000
-      targetPort: 4000
+      targetPort: http
