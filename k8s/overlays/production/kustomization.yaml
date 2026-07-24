@@ -5,7 +5,7 @@ resources:
 images:
 - name: aadityasharma96/multi-region-dashboard-backend
   newName: aadityasharma96/multi-region-dashboard-backend
-  newTag: 22-623772c7
+  newTag: 23-fdee766d
 - name: aadityasharma96/multi-region-dashboard-frontend
   newName: aadityasharma96/multi-region-dashboard-frontend
-  newTag: 22-623772c7
+  newTag: 23-fdee766d
