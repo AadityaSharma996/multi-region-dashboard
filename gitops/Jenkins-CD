@@ -132,7 +132,7 @@ images = [
 ]
 
 for image in images:
-    pattern = rf"(name:\s*{re.escape(image)}\s*\n\s*newName:\s*{re.escape(image)}\s*\n\s*newTag:)\s*\S+"
+    pattern = rf"(name:\\s*{re.escape(image)}\\s*\\n\\s*newName:\\s*{re.escape(image)}\\s*\\n\\s*newTag:)\\s*\\S+"
     text, count = re.subn(pattern, rf"\1 {tag}", text, count=1)
     if count != 1:
         raise SystemExit(f"Could not update image: {image}")
