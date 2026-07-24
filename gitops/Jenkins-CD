@@ -196,11 +196,171 @@ PY
 
     post {
         success {
-            echo "CD pipeline completed successfully."
+            script {
+                echo "CD pipeline completed successfully."
+
+                writeFile(
+                    file: 'deployment-summary.txt',
+                    text: """Multi Region Dashboard Deployment Report
+
+Status: SUCCESS
+Project: ${env.JOB_NAME}
+Build Number: ${env.BUILD_NUMBER}
+Image Tag: ${params.IMAGE_TAG}
+EKS Cluster: multi-region-dashboard
+AWS Region: us-east-1
+Build URL: ${env.BUILD_URL}
+
+The GitOps manifest was updated and pushed successfully.
+
+Argo CD will detect the GitHub change and synchronize the
+Multi Region Dashboard application with the EKS cluster.
+"""
+                )
+
+                archiveArtifacts(
+                    artifacts: 'deployment-summary.txt',
+                    allowEmptyArchive: false,
+                    fingerprint: true
+                )
+
+                emailext(
+                    attachLog: true,
+                    attachmentsPattern: 'deployment-summary.txt',
+                    from: 'aadityasharmaas96@gmail.com',
+                    to: 'aadityasharmaas96@gmail.com',
+                    subject: "Multi Region Dashboard deployment succeeded - ${currentBuild.currentResult}",
+                    mimeType: 'text/html',
+                    body: """
+                        <html>
+                        <body style="font-family: Arial, sans-serif;">
+                            <div style="background-color: #90EE90; padding: 12px; margin-bottom: 10px;">
+                                <h2 style="color: black; margin: 0;">
+                                    Deployment successful
+                                </h2>
+                            </div>
+
+                            <div style="background-color: #FFA07A; padding: 10px; margin-bottom: 10px;">
+                                <p style="color: black; font-weight: bold;">
+                                    Project: ${env.JOB_NAME}
+                                </p>
+                            </div>
+
+                            <div style="background-color: #87CEEB; padding: 10px; margin-bottom: 10px;">
+                                <p style="color: black; font-weight: bold;">
+                                    Build Number: ${env.BUILD_NUMBER}
+                                </p>
+
+                                <p style="color: black; font-weight: bold;">
+                                    Image Tag: ${params.IMAGE_TAG}
+                                </p>
+
+                                <p style="color: black; font-weight: bold;">
+                                    Status: ${currentBuild.currentResult}
+                                </p>
+
+                                <p style="color: black; font-weight: bold;">
+                                    Build URL:
+                                    <a href="${env.BUILD_URL}">
+                                        ${env.BUILD_URL}
+                                    </a>
+                                </p>
+                            </div>
+
+                            <p>
+                                The deployment-summary.txt file and complete
+                                Jenkins console log are attached.
+                            </p>
+                        </body>
+                        </html>
+                    """
+                )
+            }
         }
+
         failure {
-            echo "CD pipeline failed. Check the console output."
+            script {
+                echo "CD pipeline failed. Check the console output."
+
+                writeFile(
+                    file: 'deployment-summary.txt',
+                    text: """Multi Region Dashboard Deployment Report
+
+Status: FAILURE
+Project: ${env.JOB_NAME}
+Build Number: ${env.BUILD_NUMBER}
+Image Tag: ${params.IMAGE_TAG}
+EKS Cluster: multi-region-dashboard
+AWS Region: us-east-1
+Build URL: ${env.BUILD_URL}
+
+The Jenkins CD pipeline failed.
+
+Open the attached Jenkins console log to identify the failed
+stage and error message.
+"""
+                )
+
+                archiveArtifacts(
+                    artifacts: 'deployment-summary.txt',
+                    allowEmptyArchive: false,
+                    fingerprint: true
+                )
+
+                emailext(
+                    attachLog: true,
+                    attachmentsPattern: 'deployment-summary.txt',
+                    from: 'aadityasharmaas96@gmail.com',
+                    to: 'aadityasharmaas96@gmail.com',
+                    subject: "Multi Region Dashboard deployment failed - ${currentBuild.currentResult}",
+                    mimeType: 'text/html',
+                    body: """
+                        <html>
+                        <body style="font-family: Arial, sans-serif;">
+                            <div style="background-color: #FF7F7F; padding: 12px; margin-bottom: 10px;">
+                                <h2 style="color: black; margin: 0;">
+                                    Deployment failed
+                                </h2>
+                            </div>
+
+                            <div style="background-color: #FFA07A; padding: 10px; margin-bottom: 10px;">
+                                <p style="color: black; font-weight: bold;">
+                                    Project: ${env.JOB_NAME}
+                                </p>
+                            </div>
+
+                            <div style="background-color: #87CEEB; padding: 10px; margin-bottom: 10px;">
+                                <p style="color: black; font-weight: bold;">
+                                    Build Number: ${env.BUILD_NUMBER}
+                                </p>
+
+                                <p style="color: black; font-weight: bold;">
+                                    Image Tag: ${params.IMAGE_TAG}
+                                </p>
+
+                                <p style="color: black; font-weight: bold;">
+                                    Status: ${currentBuild.currentResult}
+                                </p>
+
+                                <p style="color: black; font-weight: bold;">
+                                    Build URL:
+                                    <a href="${env.BUILD_URL}">
+                                        ${env.BUILD_URL}
+                                    </a>
+                                </p>
+                            </div>
+
+                            <p>
+                                Open the attached deployment-summary.txt file
+                                and Jenkins console log for failure details.
+                            </p>
+                        </body>
+                        </html>
+                    """
+                )
+            }
         }
+
         always {
             deleteDir()
         }
