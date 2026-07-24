@@ -83,13 +83,12 @@ pipeline {
 
         stage('Configure EKS and Secret') {
             steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'aws-secret',
-                        usernameVariable: 'AWS_ACCESS_KEY_ID',
-                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
-                    )
-                ]) {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-secret',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
                     sh '''
                         set -e
                         set +x
