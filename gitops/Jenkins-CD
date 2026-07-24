@@ -117,28 +117,17 @@ pipeline {
             steps {
                 sh '''
                     set -e
-                    python3 - <<'PY'
-from pathlib import Path
-import os
-import re
 
-path = Path(os.environ["KUSTOMIZATION_FILE"])
-text = path.read_text()
-tag = os.environ["IMAGE_TAG"]
-images = [
-    os.environ["BACKEND_IMAGE"],
-    os.environ["FRONTEND_IMAGE"],
-]
+                    cd k8s/overlays/production
 
-for image in images:
-    pattern = rf"(name:\\s*{re.escape(image)}\\s*\\n\\s*newName:\\s*{re.escape(image)}\\s*\\n\\s*newTag:)\\s*\\S+"
-    text, count = re.subn(pattern, rf"\1 {tag}", text, count=1)
-    if count != 1:
-        raise SystemExit(f"Could not update image: {image}")
+                    kustomize edit set image \
+                      aadityasharma96/multi-region-dashboard-backend=aadityasharma96/multi-region-dashboard-backend:${IMAGE_TAG}
 
-path.write_text(text)
-PY
+                    kustomize edit set image \
+                      aadityasharma96/multi-region-dashboard-frontend=aadityasharma96/multi-region-dashboard-frontend:${IMAGE_TAG}
+
                     echo "Kubernetes image values updated."
+                    cat kustomization.yaml
                 '''
             }
         }
