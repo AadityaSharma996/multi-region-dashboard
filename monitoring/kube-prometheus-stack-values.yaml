@@ -1,60 +1,52 @@
-defaultRules:
-  create: true
-kubeEtcd:
+alertmanager:
   enabled: false
-kubeControllerManager:
-  enabled: false
-kubeScheduler:
-  enabled: false
+
 grafana:
-  enabled: true
   service:
     type: NodePort
     nodePort: 30030
+
   persistence:
     enabled: false
+
   resources:
     requests:
       cpu: 100m
-      memory: 128Mi
+      memory: 256Mi
     limits:
-      cpu: 300m
-      memory: 384Mi
+      cpu: 500m
+      memory: 768Mi
+
 prometheus:
   service:
-    type: ClusterIP
+    type: NodePort
+    nodePort: 30090
+
   prometheusSpec:
-    retention: 3d
+    retention: 24h
+
     resources:
       requests:
         cpu: 250m
         memory: 512Mi
       limits:
-        cpu: 750m
-        memory: 1536Mi
-alertmanager:
-  enabled: true
-  alertmanagerSpec:
-    resources:
-      requests:
-        cpu: 50m
-        memory: 64Mi
-      limits:
-        cpu: 200m
-        memory: 256Mi
-prometheus-node-exporter:
+        cpu: "1"
+        memory: 2Gi
+
+prometheusOperator:
   resources:
     requests:
-      cpu: 25m
-      memory: 32Mi
-    limits:
       cpu: 100m
       memory: 128Mi
-kube-state-metrics:
-  resources:
-    requests:
-      cpu: 50m
-      memory: 64Mi
     limits:
-      cpu: 200m
-      memory: 256Mi
+      cpu: 500m
+      memory: 512Mi
+
+kubeEtcd:
+  enabled: false
+
+kubeControllerManager:
+  enabled: false
+
+kubeScheduler:
+  enabled: false
